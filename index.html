@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <!--
+    SECURITY: Content-Security-Policy = a list of what this page may load.
+    'self' only: no outside scripts, styles, fonts or trackers can ever run here,
+    and no network requests are allowed at all (connect-src 'none').
+    Everything happens over Bluetooth between your phone and your Pico.
+  -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; manifest-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#ecebe7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0c0c0c" media="(prefers-color-scheme: dark)">
+  <title>Pico God Mouse</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg?v=5" type="image/svg+xml">
+  <!-- "?v=5": bump this number after changing a file, so phones don't keep an old copy -->
+  <link rel="stylesheet" href="style.css?v=5">
+  <script src="app.js?v=5" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img src="icon.svg?v=5" alt="" width="26" height="26">
+      <span class="brand-name">PICO GOD MOUSE</span>
+    </div>
+    <span id="pill" class="pill pill-off"><i class="led" aria-hidden="true"></i><span>Offline</span></span>
+  </header>
+
+  <main>
+    <h1 class="large-title">Control</h1>
+
+    <!-- Connect / unlock -->
+    <section class="card" id="connect-card">
+      <p id="unsupported" class="warn" hidden>
+        This browser can't use Bluetooth. Open this page in <strong>Google Chrome</strong> on Android.
+      </p>
+
+      <div id="connect-step">
+        <button id="btn-connect" class="btn btn-primary" type="button">Connect to Pico</button>
+        <p class="hint">First time? Hold the Pico's <strong>BOOTSEL</strong> button for 3 seconds, then tap Connect and enter your 6-digit passkey when Android asks.</p>
+      </div>
+
+      <form id="pin-step" hidden autocomplete="off">
+        <label class="micro" for="pin">Panel PIN</label>
+        <div class="row">
+          <input id="pin" type="password" autocomplete="off" required minlength="6" maxlength="64" placeholder="Your PANEL_PIN">
+          <button class="btn btn-primary" type="submit">Unlock</button>
+        </div>
+        <p class="hint">3 wrong PINs lock the Pico for a while, longer each time.</p>
+      </form>
+
+      <div id="connected-step" hidden>
+        <!-- A little "device screen" with the live status -->
+        <dl class="screen">
+          <div><dt>PC</dt><dd id="sys-pc">–</dd></div>
+          <div><dt>Clock</dt><dd id="sys-clock">–</dd></div>
+          <div><dt>Uptime</dt><dd id="sys-uptime">–</dd></div>
+          <div><dt>Temp</dt><dd id="sys-temp">–</dd></div>
+          <div class="wide"><dt>Firmware</dt><dd id="sys-fw">–</dd></div>
+        </dl>
+        <button id="btn-disconnect" class="btn" type="button">Disconnect</button>
+      </div>
+
+      <p id="msg" class="msg" role="status" aria-live="polite"></p>
+    </section>
+
+    <!-- Offline changes waiting to be sent -->
+    <section id="pending-card" class="card card-note" hidden>
+      <p><strong id="pending-count">0</strong> change(s) saved on this phone. They'll be sent to the Pico the next time you connect and unlock.</p>
+      <button id="btn-clear-pending" class="btn btn-small" type="button">Discard them</button>
+    </section>
+
+    <!-- Features: built from the Pico's catalog -->
+    <div id="features"></div>
+
+    <section id="stop-card" hidden>
+      <button id="btn-stopall" class="btn btn-danger" type="button">Stop all features</button>
+    </section>
+  </main>
+
+  <footer class="foot">
+    Talks only to your paired Pico over Bluetooth. Nothing is sent to the internet.
+  </footer>
+</body>
+</html>

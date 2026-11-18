@@ -1,0 +1,12 @@
+{
+  "name": "Pico God Mouse",
+  "short_name": "Pico Mouse",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#0c0c0c",
+  "theme_color": "#0c0c0c",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
