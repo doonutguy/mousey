@@ -94,9 +94,32 @@ async function connect() {
       status:  await svc.getCharacteristic(UUID.status),
       command: await svc.getCharacteristic(UUID.command),
     };
+    // Step 2: make sure the link is paired + encrypted BEFORE asking for the PIN.
+    // On a new phone this first protected read makes Android show its pairing
+    // prompt (type the 6-digit passkey). We wait for it and retry a few times.
+    setPill('Securing', 'warn');
+    say('Securing the link… If Android asks, enter your 6-digit passkey.');
+    let secured = false;
+    for (let attempt = 0; attempt < 4 && !secured; attempt++) {
+      try {
+        await gatt(() => chars.auth.readValue());
+        secured = true;
+      } catch (err) {
+        if (!device.gatt.connected) break;      // the Pico hung up on us
+        await sleep(2500);                       // pairing prompt still open: wait, retry
+      }
+    }
+    if (!secured) {
+      if (device.gatt.connected) device.gatt.disconnect();
+      setPill('Offline', 'off');
+      say('This phone is not paired with the Pico yet. Hold the Pico\'s BOOTSEL button 3 s, ' +
+          'then tap Connect and enter the passkey when Android asks.', 'error');
+      return;
+    }
+
     setPill('Locked', 'warn');
     showStep('pin');
-    say('Connected. Enter your PIN.');
+    say('Secure link ready. Enter your PIN.');
     $('pin').focus();
   } catch (err) {
     if (err && err.name === 'NotFoundError') { say(''); setPill('Offline', 'off'); return; } // picker cancelled
@@ -111,7 +134,7 @@ async function connect() {
 async function unlock(pin) {
   say('Checking PIN…');
   try {
-    // First read on a new phone triggers Android's pairing prompt (passkey).
+    // A fresh one-time challenge (the link is already paired at this point).
     const challenge = bytes(await gatt(() => chars.auth.readValue()));
     if (challenge.length !== 16) throw new Error('unexpected challenge');
 
@@ -126,9 +149,10 @@ async function unlock(pin) {
     await gatt(() => chars.auth.writeValueWithResponse(proof));
   } catch (err) {
     if (!device || !device.gatt.connected) {
-      say('Disconnected. Too many wrong PINs locks the Pico for a while; or pair first (BOOTSEL 3 s).', 'error');
+      say('Disconnected after 3 wrong PINs. The Pico is locked for a while; try again later.', 'error');
     } else {
       say('Wrong PIN, or the Pico is locked for a moment. Try again.', 'error');
+      $('pin').focus();
     }
     return;
   }
@@ -156,6 +180,7 @@ function onDisconnected() {
   showStep('connect');
   $('btn-connect').textContent = 'Reconnect';
   say('Disconnected. Changes you make now are saved and sent next time.');
+  for (const ui of Object.values(controls)) updateActions(ui);
   renderPendingCard();
 }
 
@@ -193,7 +218,12 @@ function validCatalog(c) {
       (p.type !== 'choice' || (Array.isArray(p.choices) && p.choices.every((c) => typeof c === 'string'))) &&
       // optional "only show me when <p> = <v>" rule
       (p.if === undefined || (typeof p.if === 'object' && p.if !== null &&
-                              typeof p.if.p === 'string' && Number.isFinite(p.if.v)))));
+                              typeof p.if.p === 'string' && Number.isFinite(p.if.v))) &&
+      // optional digits after the dot (0..3)
+      (p.dec === undefined || (Number.isInteger(p.dec) && p.dec >= 0 && p.dec <= 3))) &&
+    // optional buttons
+    (f.actions === undefined || (Array.isArray(f.actions) && f.actions.every((a) =>
+      a && typeof a.id === 'string' && /^[a-z0-9_]{1,24}$/.test(a.id) && typeof a.label === 'string'))));
 }
 
 async function loadCatalog() {
@@ -313,12 +343,16 @@ function snap(def, v) {
   return Math.min(def.max, Math.max(def.min, v));
 }
 
-// The value as the Pico's command expects it, e.g. "square", "18:00", "60".
+// Numbers with decimals are stored scaled: with dec = 1, 75 means 7.5.
+function scaleOf(def) { return 10 ** (def.dec || 0); }
+function numberText(def, v) { return (v / scaleOf(def)).toFixed(def.dec || 0); }
+
+// The value as the Pico's command expects it, e.g. "square", "18:00", "60", "7.5".
 function valueText(def, v) {
   if (def.type === 'switch') return v ? 'on' : 'off';
   if (def.type === 'choice') return def.choices[v] ?? String(v);
   if (def.type === 'time') return timeText(v);
-  return String(v);
+  return numberText(def, v);
 }
 
 function el(tag, cls, text) {
@@ -369,7 +403,7 @@ function stepperControl(def, commit) {
   const screen = el('label', 'readout');
   const input = el('input');
   input.type = 'text';
-  input.inputMode = 'numeric';
+  input.inputMode = def.dec ? 'decimal' : 'numeric';
   input.setAttribute('aria-label', def.label);
   input.setAttribute('enterkeyhint', 'done');
   const unit = el('span', 'unit', def.unit || '');
@@ -377,18 +411,21 @@ function stepperControl(def, commit) {
   wrap.append(minus, screen, plus);
 
   let value = def.min;
-  const show = () => { input.value = String(value); };
+  const show = () => { input.value = numberText(def, value); };
   const change = (v) => { v = snap(def, v); if (v !== value) { value = v; show(); commit(value); } };
 
-  holdButton(minus, (m) => change(value - def.step * m));
-  holdButton(plus,  (m) => change(value + def.step * m));
+  // Decimal settings move in tiny steps (0.1 s): holding speeds up more.
+  const fast = (m) => (def.dec && m > 1 ? m * 5 : m);
+  holdButton(minus, (m) => change(value - def.step * fast(m)));
+  holdButton(plus,  (m) => change(value + def.step * fast(m)));
 
   // Tap the number to type it with the phone's keypad.
   input.addEventListener('focus', () => input.select());
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
   input.addEventListener('blur', () => {
-    const typed = Number(input.value.replace(/[^\d-]/g, ''));
-    if (input.value.trim() !== '' && Number.isFinite(typed)) change(typed);
+    // Accept "7.5" and "7,5" (comma keypads); scale to the stored whole number.
+    const typed = Number(input.value.replace(',', '.').replace(/[^\d.-]/g, ''));
+    if (input.value.trim() !== '' && Number.isFinite(typed)) change(Math.round(typed * scaleOf(def)));
     show();                                   // also undoes nonsense input
   });
 
@@ -486,6 +523,34 @@ function rememberValue(fid, index, v) {
 function setToggle(ui, on) {
   ui.toggle.checked = on;
   ui.card.classList.toggle('is-on', on);
+  updateActions(ui);
+}
+
+// Buttons only work live: connected, unlocked, and the feature switched ON.
+function updateActions(ui) {
+  if (!ui.actions) return;
+  const live = unlocked && !!device && device.gatt.connected && ui.toggle.checked;
+  for (const b of ui.actions) b.disabled = !live;
+  if (ui.actionHint) {
+    ui.actionHint.textContent = !unlocked ? 'Connect to use the buttons.'
+      : !ui.toggle.checked ? 'Switch on to use the buttons.' : '';
+  }
+}
+
+// Press a button: sent right away, NEVER saved for later (an old key press
+// arriving hours later would be a nasty surprise).
+async function pressAction(f, a, btn) {
+  if (!unlocked || !device || !device.gatt.connected) { say('Connect first.', 'error'); return; }
+  btn.disabled = true;
+  try {
+    await writeCommand(`do ${f.id} ${a.id}`);
+    say('Sent ' + a.label, 'good');
+  } catch {
+    let why = '';
+    try { const s = await readJson(chars.status); why = typeof s.last === 'string' ? s.last : ''; } catch { /* ignore */ }
+    say('Not sent' + (why ? ': ' + why : '.'), 'error');
+  }
+  setTimeout(() => updateActions(controls[f.id]), 300);   // short pause stops double taps
 }
 
 function render() {
@@ -516,6 +581,13 @@ function render() {
     const saved = values[f.id];
     setToggle(ui, saved ? !!saved.on : false);
     toggle.addEventListener('change', () => {
+      // Features that press keys can only be switched on LIVE, never queued
+      // offline (so nothing starts typing by surprise on the next connect).
+      if (f.risky && !(unlocked && device && device.gatt.connected)) {
+        toggle.checked = !toggle.checked;
+        say(`Connect first: ${f.name} presses keys, so it can only be switched live.`, 'error');
+        return;
+      }
       setToggle(ui, toggle.checked);
       rememberValue(f.id, '$on', toggle.checked);
       send(`${f.id}.$on`, `${toggle.checked ? 'on' : 'off'} ${f.id}`);
@@ -560,7 +632,22 @@ function render() {
       const start = saved && Number.isFinite(saved.values?.[i]) ? saved.values[i] : def.min;
       pc.set(start);
     });
-    card.append(list);
+    if (f.params.length) card.append(list);
+
+    // Buttons (e.g. Ctrl+Enter, F, N)
+    if (f.actions && f.actions.length) {
+      const row = el('div', 'actions');
+      ui.actions = f.actions.map((a) => {
+        const b = el('button', 'btn btn-action', a.label);
+        b.type = 'button';
+        b.addEventListener('click', () => pressAction(f, a, b));
+        row.append(b);
+        return b;
+      });
+      ui.actionHint = el('p', 'hint', '');
+      card.append(row, ui.actionHint);
+      updateActions(ui);
+    }
 
     updateVisibility(ui);
     controls[f.id] = ui;
