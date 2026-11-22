@@ -540,7 +540,26 @@ function rememberValue(fid, index, v) {
 function setToggle(ui, on) {
   ui.toggle.checked = on;
   ui.card.classList.toggle('is-on', on);
+  if (on) ui.card.classList.remove('is-peek');   // on = open anyway
+  updateOpen(ui);
   updateActions(ui);
+}
+
+// A card is OPEN when its feature is on, or when you tapped its name to peek
+// at the settings while it's off. Closed cards fold down to just their title row.
+function updateOpen(ui) {
+  const open = ui.card.classList.contains('is-on') || ui.card.classList.contains('is-peek');
+  ui.body.inert = !open;                       // folded controls can't be reached by Tab
+  ui.peek.setAttribute('aria-expanded', String(open));
+  updateLayout();
+}
+
+// More than MOSAIC_AFTER open cards -> switch from one stack to a 2-column mosaic.
+const MOSAIC_AFTER = 4;
+function updateLayout() {
+  const open = Object.values(controls).filter((u) =>
+    u.card.classList.contains('is-on') || u.card.classList.contains('is-peek')).length;
+  document.body.classList.toggle('mosaic', open > MOSAIC_AFTER);
 }
 
 // Buttons only work live: connected, unlocked, and the feature switched ON.
@@ -579,8 +598,11 @@ function render() {
   catalog.features.forEach((f, fi) => {
     const card = el('section', 'card feature');
     const head = el('div', 'feat-head');
-    const title = el('div', 'feat-title');
-    title.append(el('span', 'idx', pad2(fi + 1)), el('h2', '', f.name));
+    // The title is also a button: while the feature is off, tap it to peek at
+    // (and change) the settings without switching the feature on.
+    const title = el('button', 'feat-title');
+    title.type = 'button';
+    title.append(el('span', 'idx', pad2(fi + 1)), el('h2', '', f.name), el('span', 'chev'));
     head.append(title);
 
     const sw = el('label', 'switch');
@@ -592,9 +614,20 @@ function render() {
     head.append(sw);
 
     const status = el('p', 'feat-status', unlocked ? '' : 'Offline: showing last known settings');
-    card.append(head, status);
+    // body = everything below the title row; it folds away when the card closes
+    const body = el('div', 'feat-body');
+    const inner = el('div', 'feat-inner');
+    body.append(inner);
+    inner.append(status);
+    card.append(head, body);
 
-    const ui = { card, toggle, status, params: [], toggleBusy: false };
+    const ui = { card, toggle, status, body, peek: title, params: [], toggleBusy: false };
+    controls[f.id] = ui;
+    title.addEventListener('click', () => {
+      if (toggle.checked) return;               // on = always open
+      card.classList.toggle('is-peek');
+      updateOpen(ui);
+    });
     const saved = values[f.id];
     setToggle(ui, saved ? !!saved.on : false);
     toggle.addEventListener('change', () => {
@@ -649,7 +682,7 @@ function render() {
       const start = saved && Number.isFinite(saved.values?.[i]) ? saved.values[i] : def.min;
       pc.set(start);
     });
-    if (f.params.length) card.append(list);
+    if (f.params.length) inner.append(list);
 
     // Buttons (e.g. Ctrl+Enter, F, N)
     if (f.actions && f.actions.length) {
@@ -662,14 +695,14 @@ function render() {
         return b;
       });
       ui.actionHint = el('p', 'hint', '');
-      card.append(row, ui.actionHint);
+      inner.append(row, ui.actionHint);
       updateActions(ui);
     }
 
     updateVisibility(ui);
-    controls[f.id] = ui;
     box.append(card);
   });
+  updateLayout();
   $('stop-card').hidden = false;
   renderPendingCard();
 }

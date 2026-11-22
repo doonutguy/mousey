@@ -159,7 +159,32 @@ input[type="password"] {
 
 /* ---- Feature cards ---------------------------------------------------------------- */
 .feat-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.feat-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.feat-title {
+  display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: 1;
+  background: none; border: 0; padding: 4px 0; margin: 0; color: inherit; font: inherit;
+  text-align: left; cursor: pointer;
+}
+.feat-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 8px; }
+.feature.is-on .feat-title { cursor: default; }
+/* little arrow: shows only while the feature is off (tap = peek at settings) */
+.chev {
+  width: 8px; height: 8px; margin-left: 2px; flex: none; align-self: center;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg) translateY(-2px); transition: transform .25s;
+}
+.feature.is-peek .chev { transform: rotate(225deg) translate(-2px, 0); }
+.feature.is-on .chev { display: none; }
+
+/* Folding: the body animates between 0 and its full height */
+.feat-body {
+  display: grid; grid-template-rows: 0fr;
+  transition: grid-template-rows .3s cubic-bezier(.3, .7, .3, 1);
+}
+.feature.is-on .feat-body, .feature.is-peek .feat-body { grid-template-rows: 1fr; }
+.feat-inner { overflow: hidden; min-height: 0; }
+.feature { transition: padding .3s; }
+.feature:not(.is-on):not(.is-peek) { padding-top: 12px; padding-bottom: 12px; }
+.feature:not(.is-on):not(.is-peek) h2 { color: var(--muted); }
 .feat-title h2 { font: 700 1.3rem/1.2 var(--sans); letter-spacing: -.01em; margin: 0; }
 .feature.is-on .idx { color: var(--accent); }
 .feat-status {
@@ -268,3 +293,35 @@ input[type="password"] {
 }
 .btn-action { width: 100%; padding: 14px 8px; font-size: 1rem; font-weight: 600; }
 .actions + .hint:empty { display: none; }
+
+/* ---- Mosaic: more than 4 cards open -> 2 columns of compact cards ---------- */
+body.mosaic main { max-width: 960px; }
+body.mosaic #features { grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
+body.mosaic .feature { padding: 12px; border-radius: 16px; min-width: 0; }
+body.mosaic .feat-head { gap: 6px; }
+/* number on its own line above the name, so the name gets the full width */
+body.mosaic .feat-title { flex-direction: column; align-items: flex-start; gap: 2px; }
+body.mosaic .feat-title h2 { font-size: 1rem; line-height: 1.15; overflow-wrap: anywhere; }
+body.mosaic .idx { font-size: .6rem; letter-spacing: .06em; }
+body.mosaic .chev { display: none; }
+/* closed cards: one slim full-width row each, gathered below the open ones */
+body.mosaic .feature:not(.is-on):not(.is-peek) { grid-column: 1 / -1; order: 1; padding: 8px 12px; }
+body.mosaic .feature:not(.is-on):not(.is-peek) .feat-title { flex-direction: row; align-items: baseline; gap: 8px; }
+body.mosaic .switch { width: 44px; height: 26px; }
+body.mosaic .switch span::before { width: 20px; height: 20px; }
+body.mosaic .switch input:checked + span::before { transform: translateX(18px); }
+body.mosaic .feat-status { font-size: .68rem; padding: 7px 8px; margin-top: 8px; border-radius: 10px; }
+body.mosaic .param { padding-top: 10px; margin-top: 10px; }
+body.mosaic .param-top { margin-bottom: 6px; }
+body.mosaic .param-label { font-size: .6rem; letter-spacing: .06em; }
+body.mosaic .stepper { grid-template-columns: 36px 1fr 36px; gap: 5px; }
+body.mosaic .key { height: 40px; border-radius: 11px; font-size: 1.25rem; }
+body.mosaic .readout { padding: 0 4px; border-radius: 11px; gap: 3px; }
+body.mosaic .readout input { font-size: 1.05rem; line-height: 40px; height: 40px; }
+body.mosaic .readout .unit { font-size: .58rem; }
+body.mosaic .segments { grid-auto-flow: row; grid-template-columns: 1fr 1fr; border-radius: 12px; padding: 3px; gap: 3px; }
+body.mosaic .seg { min-height: 36px; font-size: .62rem; letter-spacing: .02em; border-radius: 9px; }
+body.mosaic .seg[aria-checked="true"]::before { margin-bottom: 3px; width: 5px; height: 5px; }
+body.mosaic .actions { grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); gap: 6px; margin-top: 8px; }
+body.mosaic .btn-action { padding: 11px 4px; font-size: .85rem; border-radius: 11px; }
+body.mosaic .hint { font-size: .72rem; margin-top: 8px; }
