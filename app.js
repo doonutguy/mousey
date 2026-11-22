@@ -203,9 +203,26 @@ function friendly(err) {
 // =============================================================================
 //  Reading data
 // =============================================================================
-async function readJson(characteristic) {
-  const raw = bytes(await gatt(() => characteristic.readValue()));
-  return JSON.parse(dec.decode(raw));
+// Android cuts any single Bluetooth value off at 600 bytes, so the Pico hands
+// out its JSON in 480-byte pages: write "page <name> N", read, repeat until a
+// page comes back shorter than 480. Page 0 makes the Pico take a fresh snapshot.
+const PAGE_SIZE = 480;
+async function readJson(characteristic, name) {
+  const parts = [];
+  let total = 0;
+  for (let page = 0; page < 16; page++) {
+    const raw = await gatt(async () => {
+      await chars.command.writeValueWithResponse(enc.encode(`page ${name} ${page}`));
+      return bytes(await characteristic.readValue()).slice();
+    });
+    parts.push(raw);
+    total += raw.length;
+    if (raw.length < PAGE_SIZE) break;
+  }
+  const all = new Uint8Array(total);
+  let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.length; }
+  return JSON.parse(dec.decode(all));
 }
 
 // Only accept data shaped like we expect; anything else is ignored.
@@ -227,7 +244,7 @@ function validCatalog(c) {
 }
 
 async function loadCatalog() {
-  const c = await readJson(chars.catalog);
+  const c = await readJson(chars.catalog, 'catalog');
   if (!validCatalog(c)) throw new Error('catalog has an unexpected format');
   catalog = c;
   save(STORE.catalog, catalog);
@@ -235,7 +252,7 @@ async function loadCatalog() {
 }
 
 async function readStatus() {
-  const s = await readJson(chars.status);
+  const s = await readJson(chars.status, 'status');
   if (!s || !Array.isArray(s.features)) return;
 
   $('sys-pc').textContent = String(s.pc ?? '–');
@@ -547,7 +564,7 @@ async function pressAction(f, a, btn) {
     say('Sent ' + a.label, 'good');
   } catch {
     let why = '';
-    try { const s = await readJson(chars.status); why = typeof s.last === 'string' ? s.last : ''; } catch { /* ignore */ }
+    try { const s = await readJson(chars.status, 'status'); why = typeof s.last === 'string' ? s.last : ''; } catch { /* ignore */ }
     say('Not sent' + (why ? ': ' + why : '.'), 'error');
   }
   setTimeout(() => updateActions(controls[f.id]), 300);   // short pause stops double taps
