@@ -182,6 +182,8 @@ function onDisconnected() {
   say('Disconnected. Changes you make now are saved and sent next time.');
   for (const ui of Object.values(controls)) updateActions(ui);
   renderPendingCard();
+  showChip(null);
+  showRunning(null);
 }
 
 function disconnect() {
@@ -255,12 +257,7 @@ async function readStatus() {
   const s = await readJson(chars.status, 'status');
   if (!s || !Array.isArray(s.features)) return;
 
-  $('sys-pc').textContent = String(s.pc ?? '–');
-  $('sys-clock').textContent = s.clock ? String(s.clock) : 'not set';
-  const up = Number(s.uptime) || 0;
-  $('sys-uptime').textContent = `${Math.floor(up / 3600)}h ${pad2(Math.floor(up / 60) % 60)}m`;
-  $('sys-temp').textContent = Number.isFinite(s.temp) ? `${s.temp.toFixed(1)} °C` : '–';
-  $('sys-fw').textContent = String(s.fw ?? '–');
+  showChip(s);
 
   for (const f of s.features) {
     if (typeof f.id !== 'string' || !Array.isArray(f.values)) continue;
@@ -276,6 +273,67 @@ async function readStatus() {
     updateVisibility(ui);
   }
   save(STORE.values, values);
+  showRunning(s.features);
+}
+
+// ---- The "at a glance" card ---------------------------------------------------
+// Fill in the chip's own health. Called with null when we're not connected.
+function showChip(s) {
+  $('glance').classList.toggle('offline', !s);   // offline: hide the empty chip screen
+  const has = (k) => s && Number.isFinite(s[k]);
+  const pc = s ? String(s.pc ?? '–') : '–';
+  $('sys-pc').textContent = pc === 'not recognised' ? 'not seen' : pc;
+  $('sys-pc').className = !s ? '' : pc === 'connected' ? 'ok' : 'warn';
+
+  const temp = has('temp') ? s.temp : NaN;
+  $('sys-temp').textContent = Number.isFinite(temp) ? `${temp.toFixed(0)} °C` : '–';
+  $('sys-temp').className = !Number.isFinite(temp) ? '' : temp >= 70 ? 'bad' : temp >= 55 ? 'warn' : '';
+
+  // Signal: dBm -> 0..4 bars. -50 is great, -90 is about to drop out.
+  const rssi = has('rssi') && s.rssi < 0 ? s.rssi : null;
+  const bars = rssi === null ? 0 : rssi >= -60 ? 4 : rssi >= -70 ? 3 : rssi >= -80 ? 2 : 1;
+  const sig = $('sys-signal');
+  sig.dataset.bars = String(bars);
+  sig.setAttribute('aria-label', rssi === null ? 'no signal reading' : `${bars} of 4 bars, ${rssi} dBm`);
+  sig.title = rssi === null ? '' : `${rssi} dBm`;
+
+  const up = has('uptime') ? s.uptime : null;
+  $('sys-uptime').textContent = up === null ? '–'
+    : up < 3600 ? `${Math.floor(up / 60)}m ${pad2(up % 60)}s`
+    : `${Math.floor(up / 3600)}h ${pad2(Math.floor(up / 60) % 60)}m`;
+  $('sys-clock').textContent = !s ? '–' : s.clock ? String(s.clock).slice(0, 5) : 'not set';
+  $('sys-ram').textContent = has('ram') && has('ramt') ? `${s.ram} / ${s.ramt} KB` : '–';
+  $('sys-cpu').textContent = has('mhz') ? `${s.mhz} MHz` : '–';
+  $('sys-power').textContent = !s || typeof s.usbpwr !== 'boolean' ? '–' : s.usbpwr ? 'USB' : 'battery / pins';
+  $('sys-boot').textContent = !s || typeof s.boot !== 'string' ? '–'
+    : s.boot === 'watchdog' ? 'froze → restarted' : 'normal';
+  $('sys-boot').className = s && s.boot === 'watchdog' ? 'warn' : '';
+  $('sys-fw').textContent = s ? String(s.fw ?? '–') : '–';
+}
+
+// One line per feature that is ON, with what it's doing right now.
+function showRunning(list) {
+  const ul = $('running');
+  ul.replaceChildren();
+  if (!catalog) return;
+  const live = Array.isArray(list);
+  const on = live ? list.filter((f) => f && f.on)
+                  : catalog.features.filter((f) => values[f.id]?.on).map((f) => ({ id: f.id, on: true }));
+  if (!on.length) {
+    ul.append(el('li', 'running-none', live ? 'Nothing running' : 'Not connected'));
+    return;
+  }
+  for (const f of on) {
+    const meta = catalog.features.find((c) => c.id === f.id);
+    if (!meta) continue;
+    const li = el('li');
+    const name = el('button', 'running-name', meta.name);
+    name.type = 'button';
+    name.addEventListener('click', () => controls[f.id]?.card.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    li.append(el('i', 'led-on'), name,
+              el('span', 'running-text', live ? String(f.text ?? '') : 'last known: on'));
+    ul.append(li);
+  }
 }
 
 function startPolling() {
@@ -593,7 +651,7 @@ function render() {
   const box = $('features');
   box.replaceChildren();
   for (const k of Object.keys(controls)) delete controls[k];
-  if (!catalog) { $('stop-card').hidden = true; return; }
+  if (!catalog) return;
 
   catalog.features.forEach((f, fi) => {
     const card = el('section', 'card feature');
@@ -703,7 +761,6 @@ function render() {
     box.append(card);
   });
   updateLayout();
-  $('stop-card').hidden = false;
   renderPendingCard();
 }
 
@@ -725,8 +782,21 @@ function init() {
     if (pin.length >= 6) unlock(pin);
     else say('PIN is at least 6 characters.', 'error');
   });
-  $('btn-stopall').addEventListener('click', () => {
-    if (confirm('Switch every feature off?')) send('$stopall', 'stopall');
+  // Stop all: tap once to arm, tap again within 3 s to confirm. No pop-up,
+  // so it works with one thumb without reaching for a dialog button.
+  let armTimer = null;
+  const stopBtn = $('btn-stopall');
+  stopBtn.addEventListener('click', () => {
+    if (!stopBtn.classList.contains('armed')) {
+      stopBtn.classList.add('armed');
+      stopBtn.textContent = 'Tap again to stop';
+      armTimer = setTimeout(() => { stopBtn.classList.remove('armed'); stopBtn.textContent = 'Stop all'; }, 3000);
+      return;
+    }
+    clearTimeout(armTimer);
+    stopBtn.classList.remove('armed');
+    stopBtn.textContent = 'Stop all';
+    send('$stopall', 'stopall');
   });
   $('btn-clear-pending').addEventListener('click', () => {
     pending = {};
@@ -737,6 +807,8 @@ function init() {
 
   showStep('connect');
   render();          // shows last known settings, editable offline
+  showChip(null);
+  showRunning(null);
 }
 
 init();

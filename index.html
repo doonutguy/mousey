@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <!--
     SECURITY: Content-Security-Policy = a list of what this page may load.
     'self' only: no outside scripts, styles, fonts or trackers can ever run here,
@@ -16,56 +16,42 @@
   <meta name="theme-color" content="#0c0c0c" media="(prefers-color-scheme: dark)">
   <title>Pico God Mouse</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="icon" href="icon.svg?v=8" type="image/svg+xml">
-  <!-- "?v=8": bump this number after changing a file, so phones don't keep an old copy -->
-  <link rel="stylesheet" href="style.css?v=8">
-  <script src="app.js?v=8" defer></script>
+  <link rel="icon" href="icon.svg?v=9" type="image/svg+xml">
+  <!-- "?v=9": bump this number after changing a file, so phones don't keep an old copy -->
+  <link rel="stylesheet" href="style.css?v=9">
+  <script src="app.js?v=9" defer></script>
 </head>
 <body>
   <header class="top">
     <div class="brand">
-      <img src="icon.svg?v=8" alt="" width="26" height="26">
+      <img src="icon.svg?v=9" alt="" width="26" height="26">
       <span class="brand-name">PICO GOD MOUSE</span>
     </div>
     <span id="pill" class="pill pill-off"><i class="led" aria-hidden="true"></i><span>Offline</span></span>
   </header>
 
   <main>
-    <h1 class="large-title">Control</h1>
-
-    <!-- Connect / unlock -->
-    <section class="card" id="connect-card">
-      <p id="unsupported" class="warn" hidden>
-        This browser can't use Bluetooth. Open this page in <strong>Google Chrome</strong> on Android.
-      </p>
-
-      <div id="connect-step">
-        <button id="btn-connect" class="btn btn-primary" type="button">Connect to Pico</button>
-        <p class="hint">First time on this phone? Hold the Pico's <strong>BOOTSEL</strong> button for 3 seconds, tap Connect, and type your 6-digit passkey when Android asks. Then enter your PIN.</p>
+    <!-- TOP = things you READ. Everything important at a glance, no tapping. -->
+    <section class="card glance" id="glance" aria-label="Pico status">
+      <div class="glance-big">
+        <div><span class="micro">PC</span><strong id="sys-pc">–</strong></div>
+        <div><span class="micro">Signal</span><strong id="sys-signal" class="bars" data-bars="0" aria-label="no signal reading"><i></i><i></i><i></i><i></i></strong></div>
+        <div><span class="micro">Chip</span><strong id="sys-temp">–</strong></div>
       </div>
 
-      <form id="pin-step" hidden autocomplete="off">
-        <label class="micro" for="pin">Panel PIN</label>
-        <div class="row">
-          <input id="pin" type="password" autocomplete="off" required minlength="6" maxlength="64" placeholder="Your PANEL_PIN">
-          <button class="btn btn-primary" type="submit">Unlock</button>
-        </div>
-        <p class="hint">3 wrong PINs lock the Pico for a while, longer each time.</p>
-      </form>
+      <!-- what is running right now: one line per feature that is ON -->
+      <ul id="running" class="running"></ul>
 
-      <div id="connected-step" hidden>
-        <!-- A little "device screen" with the live status -->
-        <dl class="screen">
-          <div><dt>PC</dt><dd id="sys-pc">–</dd></div>
-          <div><dt>Clock</dt><dd id="sys-clock">–</dd></div>
-          <div><dt>Uptime</dt><dd id="sys-uptime">–</dd></div>
-          <div><dt>Temp</dt><dd id="sys-temp">–</dd></div>
-          <div class="wide"><dt>Firmware</dt><dd id="sys-fw">–</dd></div>
-        </dl>
-        <button id="btn-disconnect" class="btn" type="button">Disconnect</button>
-      </div>
-
-      <p id="msg" class="msg" role="status" aria-live="polite"></p>
+      <!-- the chip's own health: the little dark "device screen" -->
+      <dl class="screen">
+        <div><dt>Uptime</dt><dd id="sys-uptime">–</dd></div>
+        <div><dt>Clock</dt><dd id="sys-clock">–</dd></div>
+        <div><dt>Memory free</dt><dd id="sys-ram">–</dd></div>
+        <div><dt>CPU</dt><dd id="sys-cpu">–</dd></div>
+        <div><dt>Power</dt><dd id="sys-power">–</dd></div>
+        <div><dt>Last start</dt><dd id="sys-boot">–</dd></div>
+        <div class="wide"><dt>Firmware</dt><dd id="sys-fw">–</dd></div>
+      </dl>
     </section>
 
     <!-- Offline changes waiting to be sent -->
@@ -77,13 +63,38 @@
     <!-- Features: built from the Pico's catalog -->
     <div id="features"></div>
 
-    <section id="stop-card" hidden>
-      <button id="btn-stopall" class="btn btn-danger" type="button">Stop all features</button>
-    </section>
+    <footer class="foot">
+      Talks only to your paired Pico over Bluetooth. Nothing is sent to the internet.
+    </footer>
   </main>
 
-  <footer class="foot">
-    Talks only to your paired Pico over Bluetooth. Nothing is sent to the internet.
-  </footer>
+  <!-- BOTTOM = things you TAP to connect or stop. Always under your thumb. -->
+  <nav class="dock" aria-label="Connection">
+    <p id="msg" class="msg" role="status" aria-live="polite"></p>
+    <p id="unsupported" class="warn" hidden>
+      This browser can't use Bluetooth. Open this page in <strong>Google Chrome</strong> on Android.
+    </p>
+
+    <div id="connect-step">
+      <details class="first-time">
+        <summary>First time on this phone?</summary>
+        <p>Hold the Pico's <strong>BOOTSEL</strong> button for 3 seconds, tap Connect, and type your 6-digit passkey when Android asks. Then enter your PIN.</p>
+      </details>
+      <button id="btn-connect" class="btn btn-primary btn-dock" type="button">Connect to Pico</button>
+    </div>
+
+    <form id="pin-step" hidden autocomplete="off">
+      <div class="row">
+        <input id="pin" type="password" autocomplete="off" required minlength="6" maxlength="64"
+               placeholder="Panel PIN" aria-label="Panel PIN">
+        <button class="btn btn-primary" type="submit">Unlock</button>
+      </div>
+    </form>
+
+    <div id="connected-step" class="row" hidden>
+      <button id="btn-disconnect" class="btn btn-dock btn-side" type="button">Disconnect</button>
+      <button id="btn-stopall" class="btn btn-danger btn-dock" type="button">Stop all</button>
+    </div>
+  </nav>
 </body>
 </html>
