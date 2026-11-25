@@ -16,15 +16,15 @@
   <meta name="theme-color" content="#0c0c0c" media="(prefers-color-scheme: dark)">
   <title>Pico God Mouse</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="icon" href="icon.svg?v=9" type="image/svg+xml">
-  <!-- "?v=9": bump this number after changing a file, so phones don't keep an old copy -->
-  <link rel="stylesheet" href="style.css?v=9">
-  <script src="app.js?v=9" defer></script>
+  <link rel="icon" href="icon.svg?v=10" type="image/svg+xml">
+  <!-- "?v=10": bump this number after changing a file, so phones don't keep an old copy -->
+  <link rel="stylesheet" href="style.css?v=10">
+  <script src="app.js?v=10" defer></script>
 </head>
 <body>
   <header class="top">
     <div class="brand">
-      <img src="icon.svg?v=9" alt="" width="26" height="26">
+      <img src="icon.svg?v=10" alt="" width="26" height="26">
       <span class="brand-name">PICO GOD MOUSE</span>
     </div>
     <span id="pill" class="pill pill-off"><i class="led" aria-hidden="true"></i><span>Offline</span></span>
@@ -52,6 +52,31 @@
         <div><dt>Last start</dt><dd id="sys-boot">–</dd></div>
         <div class="wide"><dt>Firmware</dt><dd id="sys-fw">–</dd></div>
       </dl>
+    </section>
+
+    <!-- Alerts from the Pico (only shown while they're true) -->
+    <section id="alert-paused" class="card card-alert" hidden role="alert">
+      <p><strong id="paused-why">Your PC was locked.</strong>
+         Keep-awake, Auto-refresh and Shortcuts are paused, so nothing gets pressed on the lock screen.
+         Unlock your PC first, then tap Resume.</p>
+      <button id="btn-resume" class="btn btn-primary btn-small" type="button">Resume</button>
+    </section>
+    <section id="alert-hot" class="card card-alert card-hot" hidden role="alert">
+      <p><strong id="hot-text">The chip is hot.</strong>
+         Check that nothing blocks the mouse's air flow. See the Temperature alarm card.</p>
+    </section>
+
+    <!-- Profiles: saved sets of settings, kept on this phone -->
+    <section class="card profiles" id="profiles-card">
+      <details id="profiles-box">
+        <summary><span class="micro">Profiles</span><span id="profiles-count" class="count"></span></summary>
+        <ul id="profiles" class="plist"></ul>
+        <form id="profile-form" class="row add-row" autocomplete="off">
+          <input id="profile-name" type="text" maxlength="24" placeholder="Name, e.g. Work" aria-label="Profile name">
+          <button class="btn btn-small" type="submit">Save current</button>
+        </form>
+        <p class="hint">A profile remembers every feature's on/off and settings. Apply needs a live connection. Kept on this phone only.</p>
+      </details>
     </section>
 
     <!-- Offline changes waiting to be sent -->
@@ -93,6 +118,7 @@
 
     <div id="connected-step" class="row" hidden>
       <button id="btn-disconnect" class="btn btn-dock btn-side" type="button">Disconnect</button>
+      <button id="btn-lock" class="btn btn-dock btn-side btn-lock" type="button">Lock PC</button>
       <button id="btn-stopall" class="btn btn-danger btn-dock" type="button">Stop all</button>
     </div>
   </nav>

@@ -398,3 +398,70 @@ body.mosaic .hint { font-size: .72rem; margin-top: 8px; }
 /* offline: no chip numbers to show, and "last known" isn't live, so dim it */
 .glance.offline .screen { display: none; }
 .glance.offline .led-on { background: var(--muted); box-shadow: none; }
+
+/* ---- Alerts (PC locked / chip hot) ------------------------------------------ */
+.card-alert { box-shadow: inset 0 0 0 2px var(--warn); }
+.card-alert p { margin: 0; }
+.card-alert strong { display: block; margin-bottom: 4px; }
+.card-hot { box-shadow: inset 0 0 0 2px var(--danger); }
+.card-hot strong { color: var(--danger); }
+
+/* ---- Dock: Disconnect | Lock PC | Stop all ------------------------------------ */
+#connected-step .btn-side { flex: 0 0 27%; padding-left: 6px; padding-right: 6px; }
+.btn-lock { font-weight: 700; }
+
+/* ---- Lists: profiles and snippets ---------------------------------------------- */
+.profiles summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
+.profiles summary::-webkit-details-marker { display: none; }
+.profiles summary .micro { margin: 0; }
+.profiles summary::after {
+  content: ""; width: 8px; height: 8px; margin-left: auto;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg); transition: transform .25s;
+}
+.profiles details[open] summary::after { transform: rotate(225deg); }
+.count { font: 600 .7rem/1 var(--mono); color: var(--accent); }
+.plist { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.plist li { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 14px; background: var(--bg); }
+.plist .btn-small { margin: 0; flex: none; }
+.plist-info { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.plist-info strong { font-weight: 650; overflow-wrap: anywhere; }
+.plist-sub { font: .72rem/1.35 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.plist-sub.risky { color: var(--warn); }
+.plist .plist-none { background: none; padding: 2px; color: var(--muted); font: .8rem/1.4 var(--mono); }
+.btn-x { min-width: 40px; }
+.btn-x.armed { background: var(--danger); color: #fff; box-shadow: none; }
+
+.add-row { margin-top: 12px; }
+.add-row .btn-small, .snip-form .btn-small { margin: 0; }
+.profiles input[type="text"], .snip-form input, .keybox input {
+  font: inherit; color: var(--text); min-width: 0;
+  background: var(--bg); border: 0; border-radius: 12px; padding: 11px 12px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .12);
+}
+.profiles input[type="text"]:focus, .snip-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ---- Shortcuts: one-key box and snippets --------------------------------------- */
+.keybox {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px;
+  margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line);
+}
+.keybox-screen { display: block; }
+.keybox input {
+  width: 100%; text-align: center;
+  background: var(--screen); color: var(--screen-text);
+  font: 500 1.5rem/1 var(--mono); padding: 12px; border-radius: 14px;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .45);
+}
+.keybox input::placeholder { color: var(--screen-dim); font-size: .85rem; letter-spacing: .06em; }
+.keybox input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.keybox input:disabled { opacity: .5; }
+.keybox .btn-action { width: auto; padding: 14px 16px; }
+
+.snippets { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.snip-form { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 10px; }
+@media (min-width: 420px) { .snip-form { grid-template-columns: 1fr 2fr auto; } }
+
+body.mosaic .keybox { grid-template-columns: 1fr auto; gap: 6px; }
+body.mosaic .keybox > .param-label { grid-column: 1 / -1; }
+body.mosaic .snip-form { grid-template-columns: 1fr; }

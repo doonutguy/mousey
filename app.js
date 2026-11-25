@@ -24,7 +24,15 @@ const UUID = {
 const POLL_MS = 1500;
 const SEND_DELAY_MS = 700;     // wait this long after the last tap before sending
 const TIME_STEP_MIN = 15;      // -/+ on a clock time moves it by 15 minutes
-const STORE = { catalog: 'pgm.catalog.v1', values: 'pgm.values.v1', pending: 'pgm.pending.v1' };
+const STORE = {
+  catalog: 'pgm.catalog.v1', values: 'pgm.values.v1', pending: 'pgm.pending.v1',
+  profiles: 'pgm.profiles.v1', snippets: 'pgm.snippets.v1',
+};
+const MAX_PROFILES = 8;
+const MAX_SNIPPETS = 12;
+const SNIPPET_MAX_LEN = 400;
+const TYPE_CHUNK = 90;         // "type " + 90 characters stays under the Pico's 99-character limit
+const PRINTABLE = /^[\x20-\x7e]+$/;   // what a US keyboard can type: no accents, no emoji
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -37,6 +45,10 @@ let unlocked = false;
 let catalog = load(STORE.catalog, null);   // last catalog seen (works offline)
 let values = load(STORE.values, {});       // { featureId: { on, values: [] } }
 let pending = load(STORE.pending, {});     // { key: command } changes not yet sent
+let profiles = load(STORE.profiles, []);   // [{ name, data: { featureId: { on, p: { paramId: value } } } }]
+let snippets = load(STORE.snippets, []);   // [{ name, text }]
+if (!Array.isArray(profiles)) profiles = [];
+if (!Array.isArray(snippets)) snippets = [];
 let polling = false;
 const controls = {};                       // featureId -> { card, toggle, status, params: [...] }
 
@@ -182,13 +194,32 @@ function onDisconnected() {
   say('Disconnected. Changes you make now are saved and sent next time.');
   for (const ui of Object.values(controls)) updateActions(ui);
   renderPendingCard();
+  renderProfiles();
   showChip(null);
+  showAlerts(null);
   showRunning(null);
+  const grace = walkAwayGrace();
+  if (grace !== null) say(`Disconnected. Walk-away is on: your PC locks in ${grace} s unless you reconnect and unlock.`);
 }
 
 function disconnect() {
   if (device && device.gatt.connected) device.gatt.disconnect();
 }
+
+// The phone's copy of one setting, by id (null if unknown).
+function paramValue(fid, pid) {
+  const f = catalog?.features.find((x) => x.id === fid);
+  const i = f ? f.params.findIndex((p) => p.id === pid) : -1;
+  const v = i >= 0 ? values[fid]?.values?.[i] : undefined;
+  return Number.isFinite(v) ? v : null;
+}
+// Seconds until Walk-away locks after a disconnect, or null if it won't.
+function walkAwayGrace() {
+  if (!values.walkaway?.on || !paramValue('walkaway', 'on_disconnect')) return null;
+  return paramValue('walkaway', 'grace_s');
+}
+
+function live() { return unlocked && !!device && device.gatt.connected; }
 
 function showStep(step) {
   $('connect-step').hidden   = step !== 'connect';
@@ -242,7 +273,8 @@ function validCatalog(c) {
       (p.dec === undefined || (Number.isInteger(p.dec) && p.dec >= 0 && p.dec <= 3))) &&
     // optional buttons
     (f.actions === undefined || (Array.isArray(f.actions) && f.actions.every((a) =>
-      a && typeof a.id === 'string' && /^[a-z0-9_]{1,24}$/.test(a.id) && typeof a.label === 'string'))));
+      a && typeof a.id === 'string' && /^[a-z0-9_]{1,24}$/.test(a.id) && typeof a.label === 'string' &&
+      (a.key === undefined || typeof a.key === 'boolean')))));
 }
 
 async function loadCatalog() {
@@ -258,6 +290,7 @@ async function readStatus() {
   if (!s || !Array.isArray(s.features)) return;
 
   showChip(s);
+  showAlerts(s);
 
   for (const f of s.features) {
     if (typeof f.id !== 'string' || !Array.isArray(f.values)) continue;
@@ -622,9 +655,11 @@ function updateLayout() {
 
 // Buttons only work live: connected, unlocked, and the feature switched ON.
 function updateActions(ui) {
+  if (!ui) return;
+  const ok = live() && ui.toggle.checked;
+  // Every button / box that presses keys is marked .needs-live
+  for (const b of ui.card.querySelectorAll('.needs-live')) b.disabled = !ok;
   if (!ui.actions) return;
-  const live = unlocked && !!device && device.gatt.connected && ui.toggle.checked;
-  for (const b of ui.actions) b.disabled = !live;
   if (ui.actionHint) {
     ui.actionHint.textContent = !unlocked ? 'Connect to use the buttons.'
       : !ui.toggle.checked ? 'Switch on to use the buttons.' : '';
@@ -633,18 +668,24 @@ function updateActions(ui) {
 
 // Press a button: sent right away, NEVER saved for later (an old key press
 // arriving hours later would be a nasty surprise).
-async function pressAction(f, a, btn) {
-  if (!unlocked || !device || !device.gatt.connected) { say('Connect first.', 'error'); return; }
+async function pressAction(f, a, btn, key) {
+  if (!live()) { say('Connect first.', 'error'); return; }
   btn.disabled = true;
   try {
-    await writeCommand(`do ${f.id} ${a.id}`);
-    say('Sent ' + a.label, 'good');
+    await writeCommand(key === undefined ? `do ${f.id} ${a.id}` : `do ${f.id} ${a.id} ${key}`);
+    say('Sent ' + (key === undefined ? a.label : `key ${key}`), 'good');
   } catch {
     let why = '';
     try { const s = await readJson(chars.status, 'status'); why = typeof s.last === 'string' ? s.last : ''; } catch { /* ignore */ }
     say('Not sent' + (why ? ': ' + why : '.'), 'error');
   }
   setTimeout(() => updateActions(controls[f.id]), 300);   // short pause stops double taps
+}
+
+// The status message the Pico gave for the last command (why it refused).
+async function lastReply() {
+  try { const s = await readJson(chars.status, 'status'); return typeof s.last === 'string' ? s.last : ''; }
+  catch { return ''; }
 }
 
 function render() {
@@ -742,26 +783,273 @@ function render() {
     });
     if (f.params.length) inner.append(list);
 
-    // Buttons (e.g. Ctrl+Enter, F, N)
+    // Buttons (e.g. Ctrl+Enter) and one-key boxes (type a letter = it's sent)
     if (f.actions && f.actions.length) {
       const row = el('div', 'actions');
-      ui.actions = f.actions.map((a) => {
-        const b = el('button', 'btn btn-action', a.label);
+      ui.actions = [];
+      const boxes = [];
+      for (const a of f.actions) {
+        if (a.key) { boxes.push(keyBox(f, a)); continue; }
+        const b = el('button', 'btn btn-action needs-live', a.label);
         b.type = 'button';
         b.addEventListener('click', () => pressAction(f, a, b));
         row.append(b);
-        return b;
-      });
+        ui.actions.push(b);
+      }
       ui.actionHint = el('p', 'hint', '');
-      inner.append(row, ui.actionHint);
-      updateActions(ui);
+      if (ui.actions.length) inner.append(row);
+      inner.append(...boxes, ui.actionHint);
     }
+    if (f.id === 'shortcuts') inner.append(snippetBox(f));
+    updateActions(ui);
 
     updateVisibility(ui);
     box.append(card);
   });
   updateLayout();
   renderPendingCard();
+  renderProfiles();
+}
+
+// =============================================================================
+//  Alerts: PC locked (key features paused) and chip too hot
+// =============================================================================
+function showAlerts(s) {
+  const paused = s && typeof s.paused === 'string' ? s.paused : null;
+  $('alert-paused').hidden = !paused;
+  if (paused) {
+    $('paused-why').textContent = paused === 'walk-away' ? 'Walk-away locked your PC.'
+      : paused === 'lock button' ? 'You locked your PC from the phone.' : 'Your PC was locked.';
+  }
+  const hot = !!(s && s.hot === true);
+  $('alert-hot').hidden = !hot;
+  if (hot) $('hot-text').textContent = `The chip is hot (${Number.isFinite(s.temp) ? s.temp.toFixed(0) : '?'} °C).`;
+}
+
+// =============================================================================
+//  One-key box (Shortcuts): type a letter on the phone, the PC gets that key
+// =============================================================================
+function keyBox(f, a) {
+  const wrap = el('div', 'keybox');
+  const label = el('label', 'keybox-screen');
+  const input = el('input', 'needs-live');
+  input.type = 'text';
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.setAttribute('autocapitalize', 'none');
+  input.setAttribute('autocorrect', 'off');
+  input.setAttribute('enterkeyhint', 'send');
+  input.setAttribute('aria-label', 'Key to press on the PC');
+  input.placeholder = 'type a key';
+  label.append(input);
+  const again = el('button', 'btn btn-action needs-live', 'Again');
+  again.type = 'button';
+  again.title = 'Press the same key again';
+  let last = '';
+
+  const sendKey = (ch) => pressAction(f, a, again, ch);
+  input.addEventListener('focus', () => input.select());
+  input.addEventListener('input', () => {
+    // Keep only the newest character: each one you type is sent right away.
+    const ch = Array.from(input.value).pop() || '';
+    input.value = ch;
+    if (!ch) return;
+    if (!/^[!-~]$/.test(ch)) {
+      say('Only plain letters, digits and symbols (no space, accents or emoji).', 'error');
+      input.value = '';
+      return;
+    }
+    last = ch;
+    sendKey(ch);
+  });
+  input.addEventListener('keydown', (e) => {          // Enter on the keyboard = send again
+    if (e.key === 'Enter') { e.preventDefault(); if (last) sendKey(last); }
+  });
+  again.addEventListener('click', () => {
+    if (last) sendKey(last); else { say('Type a key in the box first.'); input.focus(); }
+  });
+  wrap.append(el('span', 'param-label', 'Key'), label, again);
+  return wrap;
+}
+
+// =============================================================================
+//  Snippets (inside the Shortcuts card): saved lines of text, typed on tap.
+//  Kept on this phone in plain text: never store passwords here.
+// =============================================================================
+function snippetBox(f) {
+  const box = el('div', 'snippets');
+  box.append(el('span', 'param-label', 'Snippets'));
+  const list = el('ul', 'plist');
+  box.append(list);
+
+  const form = el('form', 'snip-form');
+  form.autocomplete = 'off';
+  const name = el('input');
+  name.type = 'text'; name.maxLength = 24; name.placeholder = 'Name, e.g. Greeting';
+  name.setAttribute('aria-label', 'Snippet name');
+  const text = el('input');
+  text.type = 'text'; text.maxLength = SNIPPET_MAX_LEN; text.placeholder = 'Text to type';
+  text.setAttribute('aria-label', 'Snippet text');
+  text.spellcheck = false;
+  const add = el('button', 'btn btn-small', 'Save snippet');
+  add.type = 'submit';
+  form.append(name, text, add);
+  box.append(form, el('p', 'hint',
+    'Plain letters, digits, symbols and spaces, one line. Saved on this phone without encryption: never put passwords here.'));
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const n = name.value.trim(), t = text.value;
+    if (!n) { say('Give the snippet a name.', 'error'); name.focus(); return; }
+    if (!t.trim() || !PRINTABLE.test(t)) {
+      say('Snippet text: plain characters only (no accents, emoji or line breaks).', 'error'); text.focus(); return;
+    }
+    if (snippets.length >= MAX_SNIPPETS) { say(`At most ${MAX_SNIPPETS} snippets.`, 'error'); return; }
+    snippets.push({ name: n, text: t });
+    save(STORE.snippets, snippets);
+    name.value = ''; text.value = '';
+    renderSnippets(f, list);
+    say('Snippet saved on this phone.', 'good');
+  });
+  renderSnippets(f, list);
+  return box;
+}
+
+function renderSnippets(f, list) {
+  list.replaceChildren();
+  if (!snippets.length) { list.append(el('li', 'plist-none', 'No snippets yet.')); return; }
+  snippets.forEach((sn, i) => {
+    if (!sn || typeof sn.name !== 'string' || typeof sn.text !== 'string') return;
+    const li = el('li');
+    const info = el('div', 'plist-info');
+    info.append(el('strong', '', sn.name),
+                el('span', 'plist-sub', sn.text.length > 40 ? sn.text.slice(0, 40) + '…' : sn.text));
+    const type = el('button', 'btn btn-small needs-live', 'Type');
+    type.type = 'button';
+    type.addEventListener('click', () => typeSnippet(sn, type));
+    const del = deleteButton(() => {
+      snippets.splice(i, 1);
+      save(STORE.snippets, snippets);
+      renderSnippets(f, list);
+    });
+    li.append(info, type, del);
+    list.append(li);
+  });
+  updateActions(controls[f.id]);
+}
+
+// Send the text in pieces the Pico accepts ("type " + up to 90 characters).
+async function typeSnippet(sn, btn) {
+  if (!live()) { say('Connect first.', 'error'); return; }
+  if (!PRINTABLE.test(sn.text)) { say('This snippet has characters the PC keyboard can\'t type.', 'error'); return; }
+  btn.disabled = true;
+  try {
+    for (let at = 0; at < sn.text.length; at += TYPE_CHUNK) {
+      await writeCommand('type ' + sn.text.slice(at, at + TYPE_CHUNK));
+    }
+    say(`Typing "${sn.name}" (${sn.text.length} characters).`, 'good');
+  } catch {
+    const why = await lastReply();
+    say('Not typed' + (why ? ': ' + why : '.'), 'error');
+  }
+  setTimeout(() => updateActions(controls.shortcuts), 600);
+}
+
+// A small × button: tap once to arm, tap again within 3 s to delete.
+function deleteButton(onDelete) {
+  const b = el('button', 'btn btn-small btn-x', '×');
+  b.type = 'button';
+  b.setAttribute('aria-label', 'Delete');
+  let timer = null;
+  b.addEventListener('click', () => {
+    if (!b.classList.contains('armed')) {
+      b.classList.add('armed'); b.textContent = 'Delete?';
+      timer = setTimeout(() => { b.classList.remove('armed'); b.textContent = '×'; }, 3000);
+      return;
+    }
+    clearTimeout(timer);
+    onDelete();
+  });
+  return b;
+}
+
+// =============================================================================
+//  Profiles: a named copy of every feature's on/off + settings, kept on this
+//  phone. Apply = send only what differs, settings first, then on/off.
+// =============================================================================
+function initProfiles() {
+  $('profile-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = $('profile-name');
+    const name = input.value.trim();
+    if (!catalog) { say('Connect once first, so the page knows the features.', 'error'); return; }
+    if (!name) { say('Give the profile a name.', 'error'); input.focus(); return; }
+    const data = {};
+    for (const f of catalog.features) {
+      const v = values[f.id];
+      if (!v) continue;
+      const p = {};
+      f.params.forEach((def, i) => { if (Number.isFinite(v.values?.[i])) p[def.id] = v.values[i]; });
+      data[f.id] = { on: !!v.on, p };
+    }
+    const existing = profiles.findIndex((x) => x.name === name);
+    if (existing < 0 && profiles.length >= MAX_PROFILES) { say(`At most ${MAX_PROFILES} profiles.`, 'error'); return; }
+    if (existing >= 0) profiles[existing] = { name, data }; else profiles.push({ name, data });
+    save(STORE.profiles, profiles);
+    input.value = '';
+    renderProfiles();
+    say(existing >= 0 ? `Profile "${name}" updated.` : `Profile "${name}" saved.`, 'good');
+  });
+}
+
+function renderProfiles() {
+  const ul = $('profiles');
+  ul.replaceChildren();
+  $('profiles-count').textContent = profiles.length ? String(profiles.length) : '';
+  if (!profiles.length) { ul.append(el('li', 'plist-none', 'No profiles yet. Set things up, then save them here.')); return; }
+  profiles.forEach((pr, i) => {
+    if (!pr || typeof pr.name !== 'string' || typeof pr.data !== 'object' || !pr.data) return;
+    const onNames = (catalog?.features ?? []).filter((f) => pr.data[f.id]?.on).map((f) => f.name);
+    const risky = (catalog?.features ?? []).some((f) => f.risky && pr.data[f.id]?.on);
+    const li = el('li');
+    const info = el('div', 'plist-info');
+    info.append(el('strong', '', pr.name),
+                el('span', 'plist-sub' + (risky ? ' risky' : ''),
+                   (onNames.length ? 'on: ' + onNames.join(', ') : 'everything off') + (risky ? ' · presses keys' : '')));
+    const apply = el('button', 'btn btn-small', 'Apply');
+    apply.type = 'button';
+    apply.disabled = !live();
+    apply.addEventListener('click', () => applyProfile(pr, apply));
+    const del = deleteButton(() => { profiles.splice(i, 1); save(STORE.profiles, profiles); renderProfiles(); });
+    li.append(info, apply, del);
+    ul.append(li);
+  });
+}
+
+async function applyProfile(pr, btn) {
+  if (!live()) { say('Connect first: applying a profile can switch on features that press keys.', 'error'); return; }
+  btn.disabled = true;
+  const sets = [], offs = [], ons = [];
+  for (const f of catalog.features) {
+    const want = pr.data[f.id];
+    if (!want) continue;
+    const now = values[f.id] || { on: false, values: [] };
+    f.params.forEach((def, i) => {
+      const v = want.p?.[def.id];
+      if (Number.isFinite(v) && v !== now.values?.[i]) sets.push(`set ${f.id} ${def.id} ${valueText(def, v)}`);
+    });
+    if (!!want.on !== !!now.on) (want.on ? ons : offs).push(`${want.on ? 'on' : 'off'} ${f.id}`);
+  }
+  let failed = 0;
+  for (const cmd of [...sets, ...offs, ...ons]) {     // settings first, so features start right
+    try { await writeCommand(cmd); } catch { failed++; }
+  }
+  const total = sets.length + offs.length + ons.length;
+  say(total === 0 ? `"${pr.name}" is already active.`
+      : failed ? `"${pr.name}": ${total - failed} of ${total} changes applied.`
+      : `Profile "${pr.name}" applied (${total} changes).`, failed ? 'error' : 'good');
+  try { await readStatus(); } catch { /* next poll */ }
+  btn.disabled = !live();
 }
 
 // =============================================================================
@@ -798,6 +1086,19 @@ function init() {
     stopBtn.textContent = 'Stop all';
     send('$stopall', 'stopall');
   });
+  // Lock PC: sent live only (a lock arriving hours later would be odd).
+  $('btn-lock').addEventListener('click', async () => {
+    if (!live()) { say('Connect first.', 'error'); return; }
+    try { await writeCommand('lock'); say('PC locked. Key features paused until you tap Resume.', 'good'); }
+    catch { const why = await lastReply(); say('Lock: ' + (why || 'not sent.'), 'error'); }
+    readStatus().catch(() => {});
+  });
+  $('btn-resume').addEventListener('click', async () => {
+    if (!live()) { say('Connect first.', 'error'); return; }
+    try { await writeCommand('resume'); say('Resumed.', 'good'); } catch { say('Resume not sent.', 'error'); }
+    readStatus().catch(() => {});
+  });
+  initProfiles();
   $('btn-clear-pending').addEventListener('click', () => {
     pending = {};
     save(STORE.pending, pending);
@@ -807,6 +1108,7 @@ function init() {
 
   showStep('connect');
   render();          // shows last known settings, editable offline
+  renderProfiles();
   showChip(null);
   showRunning(null);
 }
